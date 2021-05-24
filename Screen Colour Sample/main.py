@@ -6,19 +6,24 @@ from PIL import ImageGrab, Image
 import time
 import math
 import _thread
-from pynput.mouse import Listener
+import serial
+
 
 #.exe function
 #pyinstaller --onefile -w main.py
 
 running = False
 
+#Arduino connection
+#arduino = serial.Serial(port='COM3', baudrate=9600)
+
 #Application Options
 increment = 20
 lowerLimit = 90
 upperLimit = 245
 timer = 0.3
-screenResolution = [0, 0, PIL.ImageGrab.grab().size[0], PIL.ImageGrab.grab().size[1]]
+dRez = PIL.ImageGrab.grab().size
+screenResolution = [0, 0, dRez[0], dRez[1]]
 R = G = B = 90
 
 loggedFunctionTime = []
@@ -61,7 +66,6 @@ def GetScreenColour():
         #_thread.start_new_thread(logData, (start, end))
         logData(start, end)
 
-
 def updateHex(_R, _G, _B):
     global R, G, B
     """
@@ -88,8 +92,14 @@ def updateHex(_R, _G, _B):
         print("Error with Hex: ", hexDec)
 
     window.Element("_RGB").Update(str(_R) + "," + str(_G) + "," + str(_B))
+    #sendRGBLED(_R, _G, _B)
 
     R, G, B = _R, _G, _B
+
+def sendRGBLED(R, G, B):
+    rgb = "{n1},{n2},{n3}".format(n1 = R, n2 = G, n3 = B)
+    print(rgb.encode())
+    #arduino.write(rgb.encode())
 
 def RGBtoHex(R, G, B):
     return "#" + format(round(R), 'x') + format(round(G), 'x') + format(round(B), 'x')
@@ -165,11 +175,7 @@ def showCollectedImg():
         while j < yRes:
             test = screenCap[i, j]
             if (test[0] > lowerLimit or test[1] > lowerLimit or test[2] > lowerLimit) and (test[0] < upperLimit or test[1] < upperLimit or test[2] < upperLimit):
-                screenCap[i, j] = \
-                screenCap[i + 1, j] = screenCap[i - 1, j] =\
-                screenCap[i + 1, j + 1] = screenCap[i - 1, j - 1] =\
-                screenCap[i + 1, j - 1] = screenCap[i - 1, j + 1] =\
-                screenCap[i, j + 1] = screenCap[i, j - 1] = (255, 0, 0)
+                screenCap[i, j] = (255, 0, 0)
             else:
                 screenCap[i, j] = (255, 255, 0)
             j += increment
@@ -177,62 +183,6 @@ def showCollectedImg():
         j = 0
     image.show()
     _thread.exit()
-
-
-x1 = x2 = y1 = y2 = None
-def newScannedArea():
-    overlay = tkr.Tk()
-    overlay.attributes("-fullscreen", True, "-alpha", 0.5)
-    overlay.geometry(str(PIL.ImageGrab.grab().size[0])+"x"+str(PIL.ImageGrab.grab().size[1]))
-    canvas = tkr.Canvas(overlay, width=PIL.ImageGrab.grab().size[0], height=PIL.ImageGrab.grab().size[1])
-    selection = canvas.create_rectangle(0, 0, 0, 0, fill="red")
-    canvas.pack()
-
-    def on_move(x, y):
-        global x1, x2, y1, y2
-        if x1 != None and y1 != None:
-            canvas.coords(selection, x1, y1, x, y)
-            if abs(x - x1) > 100 and abs(y - y1) > 100:
-                canvas.itemconfig(selection, fill='green')
-            else:
-                canvas.itemconfig(selection, fill='red')
-
-    def on_click(x, y, button, pressed):
-        global x1, x2, y1, y2
-        if pressed:
-            x1 = x
-            y1 = y
-        else:
-            x2 = x
-            y2 = y
-
-        if not pressed:
-            if x1 > x2:
-                temp = x2
-                x2 = x1
-                x1 = temp
-
-            if y1 > y2:
-                temp = y2
-                y2 = y1
-                y1 = temp
-
-            if x2 - x1 > 100 and y2 - y1 > 100:
-                screenResolution[0] = x1
-                screenResolution[1] = y1
-                screenResolution[2] = x2
-                screenResolution[3] = y2
-                window.Element("_RES").Update(screenResolution)
-                x1 = x2 = y1 = y2 = None
-                overlay.quit()
-                return False
-            else:
-                x1 = x2 = y1 = y2 = None
-                canvas.coords(selection, 0, 0, 0, 0)
-    
-    with Listener(on_click=on_click, on_move=on_move) as listener:
-        overlay.mainloop()
-        listener.join()
 
 column1 = 15
 column2 = 20
@@ -274,13 +224,15 @@ layout = [
         [sg.TabGroup([[sg.Tab('Options', tab1_layout), sg.Tab("Graph Data", tab2_layout)]], key="_TABS", enable_events=True)],
 
         #Control Buttons
-        [sg.Text('_'  * 58)],
+        [sg.Text('_'  * 59)],
         [sg.Button("Start", button_color="green", focus=True), sg.Button("Stop", button_color="red")],
         [sg.Button("Close")]
     ]
 
 window = sg.Window("Average Screen Colour", layout, finalize=True)
 graph = window['_GRAPH']
+
+win2_active=False
 
 while True:
     event, values = window.read()
@@ -299,8 +251,67 @@ while True:
         _thread.start_new_thread(showCollectedImg, ())
 
     if event == "_NEWRES":
-        running = False
-        _thread.start_new_thread(newScannedArea, ())
+        #running = False
+        win2_active = True
+        window.Hide()
+        layout2 = [
+            [
+                sg.Graph(
+                    canvas_size=(dRez[0] - (0.0145 * dRez[0]), dRez[1] - (0.013 * dRez[1])),
+                    graph_bottom_left=(14, dRez[1] - 7),
+                    graph_top_right=(dRez[0] - 14, 7),
+                    change_submits=True,
+                    drag_submits=True,
+                    key="win2Graph",
+                    tooltip="Space Bar to close."
+                )
+            ],
+            [sg.Button('Exit')]
+        ]
+
+        win2 = sg.Window('Window 2', layout2, no_titlebar=True, keep_on_top=True, alpha_channel=0.5, background_color="white").Finalize()
+        win2.Maximize()
+        win2Graph = win2.Element("win2Graph")
+        dragging = False
+        startPoint = endPoint = priorRect = None
+
+        while True:
+            ev2, vals2 = win2.Read()
+            if ev2 == "win2Graph":
+                x, y = vals2["win2Graph"]
+                if not dragging:
+                    startPoint = [x, y]
+                    dragging = True
+                else:
+                    endPoint = [x, y]
+                if priorRect:
+                    win2Graph.DeleteFigure(priorRect)
+                if None not in (startPoint, endPoint):
+                    fill = 'red'
+                    if abs(x - startPoint[0]) > 100 and abs(y - startPoint[1]) > 100:
+                        fill ='green'                        
+                    priorRect = win2Graph.DrawRectangle(startPoint, endPoint, line_color='black', fill_color=fill)
+            elif ev2.endswith('+UP'):
+                point = startPoint + endPoint
+                if point[0] > point[2]:
+                    point[0], point[2] = point[2], point[0]
+                if point[1] > point[3]:
+                    point[1], point[3] = point[3], point[1]
+                if point[2] - point[0] > 100 and point[3] - point[1] > 100 and (point[2] < dRez[0] and point[3] < dRez[1]):
+                    screenResolution = point
+                    window.Element("_RES").Update(screenResolution)
+                    win2.Close()
+                    window.UnHide()
+                    break
+                else:
+                    startPoint = endPoint = None
+                    dragging = win2_active = False
+
+            if ev2 == sg.WIN_CLOSED or ev2 == 'Exit':
+                win2.Close()
+                win2_active = False
+                window.UnHide()
+                break
 
     if event == "_TABS":
         if values["_TABS"] == "Options":
@@ -348,7 +359,7 @@ while True:
         window.Element("_UPPER").Update(value=245)
 
     if event == "_FULLRES":
-        screenResolution = [0, 0, PIL.ImageGrab.grab().size[0], PIL.ImageGrab.grab().size[1]]
+        screenResolution = [0, 0, dRez[0], dRez[1]]
         window.Element("_RES").Update(screenResolution)
 
     if running:
